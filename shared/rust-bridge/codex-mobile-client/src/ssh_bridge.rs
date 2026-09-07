@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{Context, Poll, Waker};
 use std::time::{Duration, Instant};
 
+use alleycat_agy_bridge::AgyBridge;
 use alleycat_bridge_core::{Bridge, ProcessLauncher, serve_stream};
 use alleycat_claude_bridge::index::{ClaudeSessionInfo, entry_from_claude};
 use alleycat_claude_bridge::{ClaudeBridge, ClaudeSessionRef};
@@ -576,6 +577,24 @@ async fn connect_bridge_runtime_via_ssh(
         }
         "opencode" => {
             return connect_opencode_via_ssh(ssh, state_dir, bin_override).await;
+        }
+        "agy" => {
+            let bin = resolve_remote_cli(
+                &ssh,
+                shell,
+                &cli_candidates(&["agy"], bin_override.as_deref()),
+            )
+            .await?;
+            info!("ssh bridge resolved runtime cli kind={kind:?} bin={bin}");
+            AgyBridge::builder()
+                .agent_bin(bin)
+                .launcher(Arc::clone(&launcher))
+                .codex_home(state_dir)
+                .pool_capacity(4)
+                .trust_persisted_cwd(true)
+                .build()
+                .await
+                .map_err(|error| SshBridgeError::BridgeStartupFailed(error.to_string()))?
         }
         "codex" => return Err(SshBridgeError::UseExistingCodexPath),
         // Every other agent (amp/droid/devin/hermes/grok/shell, plus

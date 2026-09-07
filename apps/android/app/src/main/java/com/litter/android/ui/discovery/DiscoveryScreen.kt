@@ -791,6 +791,7 @@ private val KittylitterAgents: List<AgentRuntimeKind> = listOf(
     "hermes",
     "devin",
     "grok",
+    "agy",
 )
 
 private val CodexOnlyAgents: List<AgentRuntimeKind> = listOf("codex")
@@ -1256,6 +1257,7 @@ internal fun SSHLoginDialog(
     onDismiss: () -> Unit,
     onConnect: suspend (SavedSshCredential, Boolean) -> String?,
 ) {
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var username by remember(server.id) { mutableStateOf(initialCredential?.username ?: "") }
     var authMethod by remember(server.id) { mutableStateOf(initialCredential?.method ?: SshAuthMethod.PASSWORD) }
@@ -1403,7 +1405,7 @@ internal fun SSHLoginDialog(
                         checked = detachedTransport,
                         onCheckedChange = {
                             detachedTransport = it
-                            SavedServerStore(context).updateDetachedTransport(context, server.id, it)
+                            SavedServerStore.updateDetachedTransport(context, server.id, it)
                         },
                         enabled = !isConnecting,
                     )
@@ -1618,7 +1620,7 @@ private fun availableSshBridgeKinds(agents: List<RemoteAgentAvailability>): List
 
 private fun isSshBridgeKind(kind: AgentRuntimeKind): Boolean =
     kind.metadata?.capabilities?.supportsSshBridge
-        ?: (kind in setOf("claude", "pi", "opencode", "local-studio"))
+        ?: (kind in setOf("claude", "pi", "opencode", "agy", "local-studio"))
 
 private fun sshRuntimeLabel(kind: AgentRuntimeKind): String = kind.runtimeLabel
 

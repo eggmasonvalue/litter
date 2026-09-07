@@ -25,18 +25,24 @@ import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.lifecycleScope
 import com.google.firebase.FirebaseApp
 import com.google.firebase.messaging.FirebaseMessaging
+import com.litter.android.state.AlleycatCredentialStore
 import com.litter.android.state.AppLifecycleController
 import com.litter.android.state.AppModel
 import com.litter.android.state.OpenAIApiKeyStore
 import com.litter.android.state.PetOverlayController
+import com.litter.android.state.SavedServerStore
 import com.litter.android.ui.AnimatedSplashScreen
 import com.litter.android.ui.ExperimentalFeatures
 import com.litter.android.ui.LitterApp
 import com.litter.android.ui.LitterAppTheme
 import com.litter.android.ui.WallpaperManager
+import com.litter.android.ui.discovery.alleycatWireStorageValue
 import com.litter.android.util.LLog
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import com.litter.android.core.bridge.UniffiInit
+import uniffi.codex_mobile_client.AlleycatBridge
 import uniffi.codex_mobile_client.ThreadKey
 
 class MainActivity : ComponentActivity() {
@@ -44,6 +50,7 @@ class MainActivity : ComponentActivity() {
         const val EXTRA_NOTIFICATION_SERVER_ID = "litter.notification.serverId"
         const val EXTRA_NOTIFICATION_THREAD_ID = "litter.notification.threadId"
         const val EXTRA_OPEN_PET_SETTINGS = "litter.openPetSettings"
+        const val EXTRA_PAIR_PAYLOAD = "litter.pairPayload"
         const val NOTIFICATION_PERMISSION_REQUESTED_KEY = "notification_permission_requested"
     }
 
@@ -132,6 +139,7 @@ class MainActivity : ComponentActivity() {
 
         handleNotificationIntent(intent)
         consumeOverlayNavigationIntent(intent)
+        handlePairIntent(intent)
     }
 
     override fun onResume() {
@@ -154,6 +162,7 @@ class MainActivity : ComponentActivity() {
         setIntent(intent)
         handleNotificationIntent(intent)
         consumeOverlayNavigationIntent(intent)
+        handlePairIntent(intent)
     }
 
     override fun onDestroy() {
@@ -170,6 +179,58 @@ class MainActivity : ComponentActivity() {
         }
         appModel?.stop()
         super.onDestroy()
+    }
+
+    private fun handlePairIntent(intent: Intent?) {
+        var payload = intent?.getStringExtra(EXTRA_PAIR_PAYLOAD)?.trim()
+        if (payload.isNullOrEmpty()) return
+
+        if (!payload.startsWith("{")) {
+            try {
+                val decoded = android.util.Base64.decode(payload, android.util.Base64.DEFAULT)
+                payload = String(decoded, Charsets.UTF_8).trim()
+            } catch (_: Exception) {}
+        }
+
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val model = appModel ?: return@launch
+                UniffiInit.ensure(applicationContext)
+                val alleycatBridge = AlleycatBridge()
+                val params = alleycatBridge.parsePairPayload(payload)
+                val serverId = "alleycat:${params.nodeId}"
+                val agents = model.serverBridge.listAlleycatAgents(params, false)
+                val available = agents.filter { it.available }
+                val targetAgent = available.firstOrNull { it.name == "agy" }
+                    ?: available.firstOrNull()
+                    ?: return@launch
+
+                val result = model.serverBridge.connectRemoteOverAlleycat(
+                    serverId = serverId,
+                    displayName = params.hostName ?: "Alleycat Host",
+                    params = params,
+                    agentName = targetAgent.name,
+                    selectedAgentNames = available.map { it.name },
+                    wire = targetAgent.wire,
+                )
+                val credentialStore = AlleycatCredentialStore(applicationContext)
+                credentialStore.saveToken(params.nodeId, params.token)
+                model.persistAlleycatSecretKeyIfNeeded()
+                SavedServerStore.rememberAlleycat(
+                    context = applicationContext,
+                    serverId = result.serverId,
+                    displayName = params.hostName ?: "Alleycat Host",
+                    nodeId = result.nodeId,
+                    relay = params.relay,
+                    agentName = result.agentName,
+                    agentWire = alleycatWireStorageValue(targetAgent.wire),
+                )
+                model.refreshSnapshot()
+                LLog.i("MainActivity", "Paired successfully with Alleycat host via intent payload (agent: ${targetAgent.name})")
+            } catch (e: Exception) {
+                LLog.e("MainActivity", "Failed to pair via intent payload", e)
+            }
+        }
     }
 
     private fun handleNotificationIntent(intent: Intent?) {

@@ -25,6 +25,11 @@ path = "src/main.rs"
 alleycat = { git = "https://github.com/dnakov/alleycat.git", rev = "417f2a9fe38cbed63754f0af7df61f32ec3034e6" }
 anyhow = "1"
 
+[patch."https://github.com/dnakov/alleycat.git"]
+alleycat = { path = "../../../alleycat/crates/alleycat" }
+alleycat-bridge-core = { path = "../../../alleycat/crates/bridge-core" }
+alleycat-agy-bridge = { path = "../../../alleycat/crates/agy-bridge" }
+
 # cargo-dist builds with `cargo build --profile dist`. Mirrors the
 # upstream alleycat workspace's profile so binaries are LTO-thinned in
 # release artifacts.

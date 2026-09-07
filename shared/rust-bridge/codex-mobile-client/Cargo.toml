@@ -30,6 +30,7 @@ alleycat-bridge-core = { workspace = true }
 alleycat-pi-bridge = { workspace = true }
 alleycat-claude-bridge = { workspace = true }
 alleycat-opencode-bridge = { workspace = true }
+alleycat-agy-bridge = { workspace = true }
 tokio = { workspace = true }
 async-trait = { workspace = true }
 serde = { workspace = true }

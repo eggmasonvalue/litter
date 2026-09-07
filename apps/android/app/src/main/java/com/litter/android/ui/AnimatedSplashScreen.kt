@@ -120,6 +120,7 @@ private val SplashProviders = listOf(
     SplashProvider("droid", R.drawable.agent_droid),
     SplashProvider("devin", R.drawable.agent_devin),
     SplashProvider("grok", R.drawable.agent_grok),
+    SplashProvider("agy", R.drawable.agent_agy),
 )
 
 @Composable
