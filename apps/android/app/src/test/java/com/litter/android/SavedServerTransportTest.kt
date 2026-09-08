@@ -151,10 +151,11 @@ class SavedServerTransportTest {
                 hostname = "10.0.0.5",
                 port = 22,
             )
-        val json = legacy.toJson().toString()
-            .replace("\"detachedTransport\":false", "")
+        val json = legacy.toJson().apply {
+            remove("detachedTransport")
+        }
 
-        val restored = SavedServer.fromJson(org.json.JSONObject(json))
+        val restored = SavedServer.fromJson(json)
 
         assertFalse(restored.detachedTransport)
     }

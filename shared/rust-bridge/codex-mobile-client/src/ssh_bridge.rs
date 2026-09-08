@@ -586,12 +586,18 @@ async fn connect_bridge_runtime_via_ssh(
             )
             .await?;
             info!("ssh bridge resolved runtime cli kind={kind:?} bin={bin}");
-            AgyBridge::builder()
+            hydrate_remote_agy_index(&ssh, shell, &state_dir).await;
+            let mut builder = AgyBridge::builder()
                 .agent_bin(bin)
                 .launcher(Arc::clone(&launcher))
-                .codex_home(state_dir)
+                .codex_home(state_dir.clone())
                 .pool_capacity(4)
-                .trust_persisted_cwd(true)
+                .trust_persisted_cwd(true);
+            let summaries_db = state_dir.join("conversation_summaries.db");
+            if summaries_db.is_file() {
+                builder = builder.summaries_db_override(summaries_db);
+            }
+            builder
                 .build()
                 .await
                 .map_err(|error| SshBridgeError::BridgeStartupFailed(error.to_string()))?
@@ -914,6 +920,31 @@ async fn validate_remote_cli_executes(
     Err(SshBridgeError::AgentCliMissing(format!(
         "{label} ({bin}) is present but failed to execute"
     )))
+}
+
+async fn hydrate_remote_agy_index(ssh: &SshClient, shell: RemoteShell, state_dir: &Path) {
+    use base64::Engine;
+    let script = format!("{PROFILE_INIT}\nbase64 ~/.gemini/antigravity-cli/conversation_summaries.db 2>/dev/null || true");
+    match ssh.exec_shell(&script, shell).await {
+        Ok(result) => {
+            let b64: String = result.stdout.chars().filter(|c| !c.is_whitespace()).collect();
+            if !b64.is_empty() {
+                if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(&b64) {
+                    if !bytes.is_empty() {
+                        let db_path = state_dir.join("conversation_summaries.db");
+                        if let Err(error) = std::fs::write(&db_path, bytes) {
+                            warn!("ssh bridge failed to write hydrated agy conversation_summaries.db: {error}");
+                        } else {
+                            debug!("ssh bridge successfully hydrated remote agy conversation_summaries.db");
+                        }
+                    }
+                }
+            }
+        }
+        Err(error) => {
+            warn!("ssh bridge remote agy session scan failed: {error}");
+        }
+    }
 }
 
 async fn hydrate_remote_claude_index(ssh: &SshClient, shell: RemoteShell, state_dir: &Path) {

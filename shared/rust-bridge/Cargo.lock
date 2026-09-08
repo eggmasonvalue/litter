@@ -323,6 +323,7 @@ dependencies = [
  "chrono",
  "dashmap",
  "directories",
+ "libc",
  "rusqlite",
  "serde",
  "serde_json",
