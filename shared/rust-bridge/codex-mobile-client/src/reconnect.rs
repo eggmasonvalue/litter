@@ -863,18 +863,33 @@ async fn resolve_ssh_bridge_runtime_kinds(
 }
 
 fn ssh_bridge_state_root(host: &str) -> Result<String, String> {
+    #[cfg(target_os = "android")]
+    let base = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    #[cfg(not(target_os = "android"))]
     let base = std::env::var_os("HOME")
         .map(PathBuf::from)
         .map(|home| home.join("Library").join("Application Support"))
         .unwrap_or_else(std::env::temp_dir);
+
+    #[cfg(target_os = "android")]
+    let safe_host: String = host
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-' { c } else { '_' })
+        .collect();
+    #[cfg(not(target_os = "android"))]
+    let safe_host = percent_encode_alphanumeric(host);
+
     let path = base
         .join("alleycat-bridges")
-        .join(percent_encode_alphanumeric(host));
+        .join(safe_host);
     std::fs::create_dir_all(&path)
         .map_err(|error| format!("failed to create SSH bridge state dir {:?}: {error}", path))?;
     Ok(path.to_string_lossy().into_owned())
 }
 
+#[cfg(not(target_os = "android"))]
 fn percent_encode_alphanumeric(value: &str) -> String {
     let mut encoded = String::new();
     for byte in value.as_bytes() {

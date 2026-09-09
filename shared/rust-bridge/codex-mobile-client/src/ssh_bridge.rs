@@ -308,52 +308,73 @@ pub async fn connect_runtime_resources_via_ssh(
     let mut infos = Vec::new();
     for kind in runtime_kinds {
         info!("ssh bridge runtime connect begin kind={kind:?}");
-        let (client, trait_transport) = if kind == "codex" {
-            let (client, reconnect_transport) =
-                connect_codex_via_ssh(Arc::clone(&ssh), prefer_ipv6).await?;
-            let t: Arc<dyn RemoteTransport> = Arc::new(reconnect_transport);
-            (client, Some(t))
+        let connected = if kind == "codex" {
+            match connect_codex_via_ssh(Arc::clone(&ssh), prefer_ipv6).await {
+                Ok((client, reconnect_transport)) => {
+                    let t: Arc<dyn RemoteTransport> = Arc::new(reconnect_transport);
+                    Ok((client, Some(t)))
+                }
+                Err(error) => Err(error),
+            }
         } else {
             let state_dir = state_root.join(runtime_label(&kind));
             let current_close = Arc::new(StdMutex::new(None));
-            let (client, close_handle) = connect_app_server_client_via_ssh_with_close(
+            match connect_app_server_client_via_ssh_with_close(
                 Arc::clone(&ssh),
                 &state_dir,
                 kind.clone(),
                 None,
                 transport,
             )
-            .await?;
-            if let Some(close_handle) = close_handle {
-                *current_close
-                    .lock()
-                    .unwrap_or_else(|error| error.into_inner()) = Some(close_handle);
+            .await
+            {
+                Ok((client, close_handle)) => {
+                    if let Some(close_handle) = close_handle {
+                        *current_close
+                            .lock()
+                            .unwrap_or_else(|error| error.into_inner()) = Some(close_handle);
+                    }
+                    let reconnect_transport = SshBridgeReconnectTransport {
+                        ssh: Arc::clone(&ssh),
+                        state_dir,
+                        kind: kind.clone(),
+                        transport,
+                        current_close,
+                    };
+                    let t: Arc<dyn RemoteTransport> = Arc::new(reconnect_transport);
+                    Ok((client, Some(t)))
+                }
+                Err(error) => Err(error),
             }
-            let reconnect_transport = SshBridgeReconnectTransport {
-                ssh: Arc::clone(&ssh),
-                state_dir,
-                kind: kind.clone(),
-                transport,
-                current_close,
-            };
-            let t: Arc<dyn RemoteTransport> = Arc::new(reconnect_transport);
-            (client, Some(t))
         };
-        info!("ssh bridge runtime connect ready kind={kind:?}");
-        let name = runtime_label(&kind).to_string();
-        let display_name = runtime_display_name(&kind).to_string();
-        resources.push(RuntimeRemoteSessionResource {
-            runtime_kind: kind.clone(),
-            client,
-            transport: trait_transport,
-            keepalive: None,
-        });
-        infos.push(AgentRuntimeInfo {
-            kind,
-            name,
-            display_name,
-            available: true,
-        });
+
+        match connected {
+            Ok((client, trait_transport)) => {
+                info!("ssh bridge runtime connect ready kind={kind:?}");
+                let name = runtime_label(&kind).to_string();
+                let display_name = runtime_display_name(&kind).to_string();
+                resources.push(RuntimeRemoteSessionResource {
+                    runtime_kind: kind.clone(),
+                    client,
+                    transport: trait_transport,
+                    keepalive: None,
+                });
+                infos.push(AgentRuntimeInfo {
+                    kind,
+                    name,
+                    display_name,
+                    available: true,
+                });
+            }
+            Err(error) => {
+                warn!("ssh bridge runtime connect failed kind={kind:?}: {error}");
+            }
+        }
+    }
+    if resources.is_empty() {
+        return Err(SshBridgeError::BridgeStartupFailed(
+            "no requested SSH bridge runtimes could be connected".to_string(),
+        ));
     }
     info!(
         "ssh bridge runtime connect complete registered_runtimes={:?}",
