@@ -544,6 +544,14 @@ fun HomeDashboardScreen(
             }
         }
 
+        if (showOnboardingCoachmarks) {
+            EmptyHomeFatCat(modifier = Modifier.matchParentSize())
+            OnboardingCoachmarks(
+                targets = relativeCoachmarkTargets,
+                modifier = Modifier.matchParentSize(),
+            )
+        }
+
         // Top chrome: header + server pill row, floating over the list with a
         // gradient scrim (matches iOS translucent bar). Top edge is fully
         // opaque so the status bar area stays legible, fading to transparent
@@ -999,14 +1007,6 @@ fun HomeDashboardScreen(
                     }
                 }
             }
-        }
-
-        if (showOnboardingCoachmarks) {
-            EmptyHomeFatCat(modifier = Modifier.matchParentSize())
-            OnboardingCoachmarks(
-                targets = relativeCoachmarkTargets,
-                modifier = Modifier.matchParentSize(),
-            )
         }
 
     }
