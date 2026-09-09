@@ -474,8 +474,11 @@ fun ComposerBar(
             attachedFiles = emptyList()
             scope.launch {
                 try {
+                    android.util.Log.i("ComposerBar", "Calling startTurn for key=$threadKey")
                     appModel.startTurn(threadKey, payload)
+                    android.util.Log.i("ComposerBar", "startTurn success for key=$threadKey")
                 } catch (e: Exception) {
+                    android.util.Log.e("ComposerBar", "startTurn failed for key=$threadKey", e)
                     textFieldValue = TextFieldValue(
                         text = payload.text,
                         selection = TextRange(payload.text.length),
