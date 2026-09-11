@@ -966,6 +966,25 @@ async fn hydrate_remote_agy_index(ssh: &SshClient, shell: RemoteShell, state_dir
             warn!("ssh bridge remote agy session scan failed: {error}");
         }
     }
+
+    let model_script = format!(
+        "{PROFILE_INIT}\npython3 -c '\nimport sqlite3, glob, re, os, json\nconv_dir = os.path.expanduser(\"~/.gemini/antigravity-cli/conversations\")\nmapping = {{}}\nfor db in glob.glob(f\"{{conv_dir}}/*.db\"):\n    cid = os.path.basename(db)[:-3]\n    try:\n        conn = sqlite3.connect(f\"file:{{db}}?mode=ro\", uri=True)\n        cur = conn.cursor()\n        cur.execute(\"SELECT data FROM executor_metadata ORDER BY idx DESC LIMIT 1\")\n        row = cur.fetchone()\n        if row and row[0]:\n            m = re.findall(rb\"(?:gemini-[0-9\\.]+-flash(?:-[a-z]+)?|gemini-[0-9\\.]+-pro(?:-[a-z]+)?|claude-[a-z0-9\\-]+|gpt-oss-[a-z0-9\\-]+)\", row[0])\n            if m: mapping[cid] = m[0].decode(\"utf-8\", errors=\"ignore\")\n    except: pass\nprint(json.dumps(mapping))\n' 2>/dev/null | base64 -w0 || true"
+    );
+    if let Ok(result) = ssh.exec_shell(&model_script, shell).await {
+        let b64: String = result.stdout.chars().filter(|c| !c.is_whitespace()).collect();
+        if !b64.is_empty() {
+            if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(&b64) {
+                if !bytes.is_empty() {
+                    let models_path = state_dir.join("conversation_models.json");
+                    if let Err(error) = std::fs::write(&models_path, bytes) {
+                        warn!("ssh bridge failed to write hydrated agy conversation_models.json: {error}");
+                    } else {
+                        debug!("ssh bridge successfully hydrated remote agy conversation_models.json");
+                    }
+                }
+            }
+        }
+    }
 }
 
 async fn hydrate_remote_claude_index(ssh: &SshClient, shell: RemoteShell, state_dir: &Path) {

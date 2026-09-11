@@ -80,7 +80,7 @@ inherits = "release"
 lto = false
 strip = true
 debug = 0
-codegen-units = 16
+codegen-units = 4
 
 [patch."https://github.com/dnakov/alleycat.git"]
 alleycat-bridge-core = { path = "../../../alleycat/crates/bridge-core" }

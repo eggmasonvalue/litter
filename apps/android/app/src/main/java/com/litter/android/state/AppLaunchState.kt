@@ -111,6 +111,11 @@ class AppLaunchState(context: Context) {
 
     fun syncFromThread(thread: AppThreadSnapshot?) {
         updateCurrentCwd(thread?.info?.cwd)
+        val threadModel = (thread?.model ?: thread?.info?.model ?: "").trim()
+        if (threadModel.isNotEmpty()) {
+            updateSelectedModel(threadModel, agentRuntimeKind = thread?.agentRuntimeKind)
+            updateReasoningEffort(thread?.reasoningEffort)
+        }
         val threadKey = thread?.key ?: return
         val permissionKey = permissionKey(threadKey)
         val existing = snapshot.value.threadPermissionOverrides[permissionKey]
