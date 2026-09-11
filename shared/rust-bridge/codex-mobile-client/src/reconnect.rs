@@ -110,6 +110,7 @@ pub(crate) enum ReconnectPlan {
         ssh_port: u16,
         credential: SshCredentialRecord,
         runtime_kinds: Vec<AgentRuntimeKind>,
+        detached_transport: bool,
     },
     Local {
         server_id: String,
@@ -336,6 +337,7 @@ pub(crate) fn compute_reconnect_plan_with_slingshot(
                 runtime_kinds: parse_ssh_bridge_runtime_kinds(
                     server.alleycat_agent_name.as_deref(),
                 ),
+                detached_transport: server.detached_transport,
             });
         }
         return None;
@@ -490,6 +492,7 @@ pub(crate) async fn execute_reconnect_plan(
             ssh_port,
             credential,
             runtime_kinds,
+            detached_transport,
         } => {
             info!(
                 "reconnect: executing SSH bridge plan server_id={} host={} ssh_port={} runtimes={:?}",
@@ -544,6 +547,11 @@ pub(crate) async fn execute_reconnect_plan(
                     };
                 }
             };
+            let transport = if *detached_transport {
+                crate::ssh_bridge::SshBridgeTransport::Detached
+            } else {
+                crate::ssh_bridge::SshBridgeTransport::Ephemeral
+            };
             match client
                 .connect_remote_over_ssh_bridges(
                     ssh_client,
@@ -552,7 +560,7 @@ pub(crate) async fn execute_reconnect_plan(
                     host.clone(),
                     state_root,
                     selected,
-                    crate::ssh_bridge::SshBridgeTransport::Ephemeral,
+                    transport,
                 )
                 .await
             {
