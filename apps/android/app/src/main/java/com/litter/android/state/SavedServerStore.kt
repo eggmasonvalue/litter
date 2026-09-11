@@ -203,7 +203,13 @@ data class SavedServer(
             } else {
                 true
             },
-            detachedTransport = obj.optBoolean("detachedTransport"),
+            detachedTransport = if (obj.has("detachedTransport")) {
+                obj.optBoolean("detachedTransport")
+            } else {
+                obj.optString("source").equals("ssh", ignoreCase = true) ||
+                    obj.optString("alleycatAgentWire").equals("ssh-bridge", ignoreCase = true) ||
+                    obj.optString("alleycatAgentName").isNotBlank()
+            },
             alleycatHost = if (obj.has("alleycatHost")) obj.getString("alleycatHost") else null,
             alleycatNodeId = obj.optString("alleycatNodeId").ifBlank { null },
             alleycatRelay = obj.optString("alleycatRelay").ifBlank { null },
@@ -257,7 +263,7 @@ object SavedServerStore {
         return try {
             val array = JSONArray(json)
             val decoded = (0 until array.length()).map { SavedServer.fromJson(array.getJSONObject(it)) }
-            val migrated = decoded.map { migrateDisplayName(it.normalizedForPersistence()) }
+            val migrated = decoded.map { migrateSavedServer(it.normalizedForPersistence()) }
             if (decoded != migrated) {
                 save(context, migrated)
             }
@@ -398,6 +404,17 @@ object SavedServerStore {
 
     private fun String?.normalizedAlleycatNodeId(): String? =
         this?.trim()?.lowercase()?.takeIf { it.isNotEmpty() }
+
+    private fun migrateSavedServer(server: SavedServer): SavedServer {
+        var result = migrateDisplayName(server)
+        val isSshBridge = result.source.equals("ssh", ignoreCase = true) ||
+            result.alleycatAgentWire.equals("ssh-bridge", ignoreCase = true) ||
+            !result.alleycatAgentName.isNullOrBlank()
+        if (isSshBridge && !result.detachedTransport) {
+            result = result.copy(detachedTransport = true)
+        }
+        return result
+    }
 
     private fun migrateDisplayName(server: SavedServer): SavedServer {
         val nodeId = server.alleycatNodeId?.trim()?.takeIf { it.isNotEmpty() } ?: return server
