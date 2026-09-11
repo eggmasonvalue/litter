@@ -433,18 +433,20 @@ fun ComposerBar(
         } ?: false
         if (!handledAsSlash && (text.isNotBlank() || attachedImage != null || attachedFiles.isNotEmpty())) {
             val launchState = appModel.launchState.snapshot.value
-            val pendingModel = launchState.selectedModel.trim().ifEmpty { null }
             val thread = appModel.snapshot.value?.threads?.find { it.key == threadKey }
+            val threadModel = (thread?.model ?: thread?.info?.model ?: "").trim()
+            val pendingModel = launchState.selectedModel.trim().ifEmpty { threadModel.ifEmpty { null } }
+            val effectiveRuntime = launchState.selectedAgentRuntimeKind ?: thread?.agentRuntimeKind
             val selectedModel = appModel.snapshot.value?.servers
                 ?.firstOrNull { it.serverId == threadKey.serverId }
                 ?.availableModels
                 ?.firstOrNull {
-                    it.matchesModelSelection(pendingModel.orEmpty(), launchState.selectedAgentRuntimeKind)
+                    it.matchesModelSelection(pendingModel.orEmpty(), effectiveRuntime)
                 }
             val effort = if (thread?.ampReasoningEffortLocked == true) {
                 null
             } else {
-                val pending = launchState.reasoningEffort.trim()
+                val pending = launchState.reasoningEffort.trim().ifEmpty { thread?.reasoningEffort?.trim().orEmpty() }
                 val requested = reasoningEffortFromServerValue(pending)
                 val supported = selectedModel?.supportedReasoningEfforts.orEmpty()
                     .map { it.reasoningEffort }

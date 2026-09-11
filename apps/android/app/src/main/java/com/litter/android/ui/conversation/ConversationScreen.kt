@@ -231,6 +231,8 @@ fun ConversationScreen(
     }
 
     LaunchedEffect(
+        threadKey,
+        thread?.model,
         thread?.info?.cwd,
         thread?.effectiveApprovalPolicy,
         thread?.effectiveSandboxPolicy,
