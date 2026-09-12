@@ -985,6 +985,181 @@ async fn hydrate_remote_agy_index(ssh: &SshClient, shell: RemoteShell, state_dir
             }
         }
     }
+
+    let turns_script = format!(
+        r#"{PROFILE_INIT}
+python3 -c '
+import sqlite3, glob, os, json, gzip, base64
+
+def decode_protobuf(data):
+    i = 0; fields = []
+    while i < len(data):
+        key = 0; shift = 0
+        while i < len(data):
+            b = data[i]; i += 1
+            key |= (b & 0x7f) << shift
+            if not (b & 0x80): break
+            shift += 7
+        field_num = key >> 3; wire_type = key & 0x7
+        if wire_type == 0:
+            val = 0; shift = 0
+            while i < len(data):
+                b = data[i]; i += 1
+                val |= (b & 0x7f) << shift
+                if not (b & 0x80): break
+                shift += 7
+            fields.append((field_num, "varint", val))
+        elif wire_type == 2:
+            length = 0; shift = 0
+            while i < len(data):
+                b = data[i]; i += 1
+                length |= (b & 0x7f) << shift
+                if not (b & 0x80): break
+                shift += 7
+            val = data[i:i+length]; i += length
+            fields.append((field_num, "bytes", val))
+        elif wire_type == 1:
+            val = data[i:i+8]; i += 8
+            fields.append((field_num, "64bit", val))
+        elif wire_type == 5:
+            val = data[i:i+4]; i += 4
+            fields.append((field_num, "32bit", val))
+        else: break
+    return fields
+
+def parse_db(db_path):
+    conn = sqlite3.connect(f"file:{{db_path}}?mode=ro", uri=True)
+    c = conn.cursor()
+    c.execute("SELECT idx, step_type, status, step_payload FROM steps ORDER BY idx")
+    turns = []
+    current_turn = None
+    for idx, st, status, payload in c.fetchall():
+        if not payload: continue
+        parsed = decode_protobuf(payload)
+        if st == 14:
+            for fn, wt, val in parsed:
+                if fn == 19:
+                    for sfn, swt, sval in decode_protobuf(val):
+                        if sfn == 2:
+                            try:
+                                text = sval.decode("utf-8")
+                                if text.strip():
+                                    if current_turn: turns.append(current_turn)
+                                    current_turn = {{
+                                        "turn_id": f"turn-{{len(turns)+1}}",
+                                        "status": "completed",
+                                        "items": [{{
+                                            "type": "userMessage",
+                                            "id": f"item-user-{{idx}}",
+                                            "content": [{{"type": "text", "text": text}}]
+                                        }}],
+                                        "started_at": 0,
+                                        "completed_at": 0
+                                    }}
+                            except: pass
+        elif st == 15:
+            for fn, wt, val in parsed:
+                if fn == 20:
+                    for sfn, swt, sval in decode_protobuf(val):
+                        if sfn == 1:
+                            try:
+                                text = sval.decode("utf-8")
+                                if text.strip():
+                                    if not current_turn:
+                                        current_turn = {{
+                                            "turn_id": f"turn-{{len(turns)+1}}",
+                                            "status": "completed",
+                                            "items": [],
+                                            "started_at": 0,
+                                            "completed_at": 0
+                                        }}
+                                    current_turn["items"].append({{
+                                        "type": "agentMessage",
+                                        "id": f"item-agent-{{idx}}",
+                                        "text": text,
+                                        "phase": None,
+                                        "memory_citation": None
+                                    }})
+                            except: pass
+        elif st == 132:
+            cmd = ""
+            out = ""
+            for fn, wt, val in parsed:
+                if fn == 140:
+                    for sfn, swt, sval in decode_protobuf(val):
+                        if sfn == 1:
+                            key = ""
+                            for kfn, kwt, kval in decode_protobuf(sval):
+                                if kwt == "bytes":
+                                    s = kval.decode("utf-8", errors="ignore")
+                                    if s in ("CommandLine", "TargetFile", "Query", "toolSummary", "Cwd", "toolAction"): key = s
+                                    elif key == "CommandLine": cmd = s
+                                    elif key == "TargetFile" and not cmd: cmd = f"File: {{s}}"
+                                    elif key == "Query" and not cmd: cmd = f"Search: {{s}}"
+                                    elif key == "toolSummary" and not cmd: cmd = s
+                        elif sfn == 2:
+                            for rfn, rwt, rval in decode_protobuf(sval):
+                                if rfn == 1 and rwt == "bytes":
+                                    out = rval.decode("utf-8", errors="ignore")
+            if not current_turn:
+                current_turn = {{
+                    "turn_id": f"turn-{{len(turns)+1}}",
+                    "status": "completed",
+                    "items": [],
+                    "started_at": 0,
+                    "completed_at": 0
+                }}
+            current_turn["items"].append({{
+                "type": "commandExecution",
+                "id": f"item-tool-{{idx}}",
+                "command": cmd or "bash",
+                "cwd": "",
+                "status": "completed",
+                "aggregatedOutput": out or None,
+                "exitCode": 0,
+                "source": "agent"
+            }})
+    if current_turn: turns.append(current_turn)
+    return turns
+
+conv_dir = os.path.expanduser("~/.gemini/antigravity-cli/conversations")
+files = sorted(glob.glob(f"{{conv_dir}}/*.db"), key=os.path.getmtime, reverse=True)[:25]
+res = {{}}
+for f in files:
+    cid = os.path.basename(f)[:-3]
+    try:
+        t = parse_db(f)
+        if t: res[cid] = t
+    except: pass
+compressed = gzip.compress(json.dumps(res).encode("utf-8"))
+print(base64.b64encode(compressed).decode("ascii"))
+' 2>/dev/null || true"#
+    );
+    if let Ok(result) = ssh.exec_shell(&turns_script, shell).await {
+        let b64: String = result.stdout.chars().filter(|c| !c.is_whitespace()).collect();
+        if !b64.is_empty() {
+            if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(&b64) {
+                use flate2::read::GzDecoder;
+                use std::io::Read;
+                let mut decoder = GzDecoder::new(&bytes[..]);
+                let mut json_str = String::new();
+                if decoder.read_to_string(&mut json_str).is_ok() {
+                    if let Ok(map) = serde_json::from_str::<std::collections::HashMap<String, serde_json::Value>>(&json_str) {
+                        let turns_dir = state_dir.join("agy_turns");
+                        let _ = std::fs::create_dir_all(&turns_dir);
+                        let count = map.len();
+                        for (cid, turns) in map {
+                            let path = turns_dir.join(format!("{cid}.json"));
+                            if let Ok(rendered) = serde_json::to_string_pretty(&turns) {
+                                let _ = std::fs::write(&path, rendered);
+                            }
+                        }
+                        info!("ssh bridge successfully hydrated {count} remote agy conversation turn histories");
+                    }
+                }
+            }
+        }
+    }
 }
 
 async fn hydrate_remote_claude_index(ssh: &SshClient, shell: RemoteShell, state_dir: &Path) {

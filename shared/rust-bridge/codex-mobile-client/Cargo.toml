@@ -51,6 +51,7 @@ tracing-subscriber = { workspace = true }
 shlex = { workspace = true }
 linkify = "0.10"
 unicode-segmentation = "1"
+flate2 = "1"
 
 [features]
 rpc-trace = []
@@ -72,6 +73,5 @@ jni = "0.21"
 ndk-context = "0.1"
 openssl-sys = { version = "0.9", features = ["vendored"] }
 portable-pty = "0.9"
-flate2 = "1"
 tar = "0.4"
 rusqlite = { version = "0.32.1", features = ["bundled"] }
