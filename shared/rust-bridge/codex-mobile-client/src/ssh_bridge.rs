@@ -1147,11 +1147,35 @@ print(base64.b64encode(compressed).decode("ascii"))
                     if let Ok(map) = serde_json::from_str::<std::collections::HashMap<String, serde_json::Value>>(&json_str) {
                         let turns_dir = state_dir.join("agy_turns");
                         let _ = std::fs::create_dir_all(&turns_dir);
+
+                        // Read state_dir/threads.json to map agySessionId -> threadId
+                        let mut agy_to_thread = std::collections::HashMap::new();
+                        let threads_file = state_dir.join("threads.json");
+                        if let Ok(content) = std::fs::read_to_string(&threads_file) {
+                            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
+                                let list = val.get("threads").and_then(|t| t.as_array()).cloned().unwrap_or_else(|| {
+                                    val.as_array().cloned().unwrap_or_default()
+                                });
+                                for item in list {
+                                    if let (Some(tid), Some(asid)) = (
+                                        item.get("threadId").and_then(|t| t.as_str()),
+                                        item.get("agySessionId").and_then(|a| a.as_str()),
+                                    ) {
+                                        if !asid.is_empty() {
+                                            agy_to_thread.insert(asid.to_string(), tid.to_string());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         let count = map.len();
                         for (cid, turns) in map {
-                            let path = turns_dir.join(format!("{cid}.json"));
                             if let Ok(rendered) = serde_json::to_string_pretty(&turns) {
-                                let _ = std::fs::write(&path, rendered);
+                                let _ = std::fs::write(turns_dir.join(format!("{cid}.json")), &rendered);
+                                if let Some(tid) = agy_to_thread.get(&cid) {
+                                    let _ = std::fs::write(turns_dir.join(format!("{tid}.json")), &rendered);
+                                }
                             }
                         }
                         info!("ssh bridge successfully hydrated {count} remote agy conversation turn histories");
