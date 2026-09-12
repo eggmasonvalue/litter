@@ -202,7 +202,7 @@ fn normalize_model_info_for_runtime(
 }
 
 fn runtime_kind_uses_qualified_catalog(runtime_kind: &str) -> bool {
-    matches!(runtime_kind, "pi" | "local-studio" | "opencode")
+    matches!(runtime_kind, "pi" | "local-studio" | "opencode" | "agy")
 }
 
 fn derive_model_provider_id(id: &str) -> Option<&str> {

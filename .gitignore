@@ -47,7 +47,12 @@ apps/android/app/src/main/assets/licenses/proot-COPYING.txt
 apps/android/app/src/main/assets/licenses/talloc-COPYING.txt
 apps/android/app/src/main/assets/proot.version
 
-# Kotlin compiler cache
+# Pi Agent harness state and local scratchpad
+.pi/
+analyze.py
+fib.sh
+fib_primes.py
+
 apps/android/.kotlin/
 
 # Logs and temp

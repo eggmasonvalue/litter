@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{Context, Poll, Waker};
 use std::time::{Duration, Instant};
 
+use alleycat_agy_bridge::AgyBridge;
 use alleycat_bridge_core::{Bridge, ProcessLauncher, serve_stream};
 use alleycat_claude_bridge::index::{ClaudeSessionInfo, entry_from_claude};
 use alleycat_claude_bridge::{ClaudeBridge, ClaudeSessionRef};
@@ -307,52 +308,73 @@ pub async fn connect_runtime_resources_via_ssh(
     let mut infos = Vec::new();
     for kind in runtime_kinds {
         info!("ssh bridge runtime connect begin kind={kind:?}");
-        let (client, trait_transport) = if kind == "codex" {
-            let (client, reconnect_transport) =
-                connect_codex_via_ssh(Arc::clone(&ssh), prefer_ipv6).await?;
-            let t: Arc<dyn RemoteTransport> = Arc::new(reconnect_transport);
-            (client, Some(t))
+        let connected = if kind == "codex" {
+            match connect_codex_via_ssh(Arc::clone(&ssh), prefer_ipv6).await {
+                Ok((client, reconnect_transport)) => {
+                    let t: Arc<dyn RemoteTransport> = Arc::new(reconnect_transport);
+                    Ok((client, Some(t)))
+                }
+                Err(error) => Err(error),
+            }
         } else {
             let state_dir = state_root.join(runtime_label(&kind));
             let current_close = Arc::new(StdMutex::new(None));
-            let (client, close_handle) = connect_app_server_client_via_ssh_with_close(
+            match connect_app_server_client_via_ssh_with_close(
                 Arc::clone(&ssh),
                 &state_dir,
                 kind.clone(),
                 None,
                 transport,
             )
-            .await?;
-            if let Some(close_handle) = close_handle {
-                *current_close
-                    .lock()
-                    .unwrap_or_else(|error| error.into_inner()) = Some(close_handle);
+            .await
+            {
+                Ok((client, close_handle)) => {
+                    if let Some(close_handle) = close_handle {
+                        *current_close
+                            .lock()
+                            .unwrap_or_else(|error| error.into_inner()) = Some(close_handle);
+                    }
+                    let reconnect_transport = SshBridgeReconnectTransport {
+                        ssh: Arc::clone(&ssh),
+                        state_dir,
+                        kind: kind.clone(),
+                        transport,
+                        current_close,
+                    };
+                    let t: Arc<dyn RemoteTransport> = Arc::new(reconnect_transport);
+                    Ok((client, Some(t)))
+                }
+                Err(error) => Err(error),
             }
-            let reconnect_transport = SshBridgeReconnectTransport {
-                ssh: Arc::clone(&ssh),
-                state_dir,
-                kind: kind.clone(),
-                transport,
-                current_close,
-            };
-            let t: Arc<dyn RemoteTransport> = Arc::new(reconnect_transport);
-            (client, Some(t))
         };
-        info!("ssh bridge runtime connect ready kind={kind:?}");
-        let name = runtime_label(&kind).to_string();
-        let display_name = runtime_display_name(&kind).to_string();
-        resources.push(RuntimeRemoteSessionResource {
-            runtime_kind: kind.clone(),
-            client,
-            transport: trait_transport,
-            keepalive: None,
-        });
-        infos.push(AgentRuntimeInfo {
-            kind,
-            name,
-            display_name,
-            available: true,
-        });
+
+        match connected {
+            Ok((client, trait_transport)) => {
+                info!("ssh bridge runtime connect ready kind={kind:?}");
+                let name = runtime_label(&kind).to_string();
+                let display_name = runtime_display_name(&kind).to_string();
+                resources.push(RuntimeRemoteSessionResource {
+                    runtime_kind: kind.clone(),
+                    client,
+                    transport: trait_transport,
+                    keepalive: None,
+                });
+                infos.push(AgentRuntimeInfo {
+                    kind,
+                    name,
+                    display_name,
+                    available: true,
+                });
+            }
+            Err(error) => {
+                warn!("ssh bridge runtime connect failed kind={kind:?}: {error}");
+            }
+        }
+    }
+    if resources.is_empty() {
+        return Err(SshBridgeError::BridgeStartupFailed(
+            "no requested SSH bridge runtimes could be connected".to_string(),
+        ));
     }
     info!(
         "ssh bridge runtime connect complete registered_runtimes={:?}",
@@ -576,6 +598,30 @@ async fn connect_bridge_runtime_via_ssh(
         }
         "opencode" => {
             return connect_opencode_via_ssh(ssh, state_dir, bin_override).await;
+        }
+        "agy" => {
+            let bin = resolve_remote_cli(
+                &ssh,
+                shell,
+                &cli_candidates(&["agy"], bin_override.as_deref()),
+            )
+            .await?;
+            info!("ssh bridge resolved runtime cli kind={kind:?} bin={bin}");
+            hydrate_remote_agy_index(&ssh, shell, &state_dir).await;
+            let mut builder = AgyBridge::builder()
+                .agent_bin(bin)
+                .launcher(Arc::clone(&launcher))
+                .codex_home(state_dir.clone())
+                .pool_capacity(4)
+                .trust_persisted_cwd(true);
+            let summaries_db = state_dir.join("conversation_summaries.db");
+            if summaries_db.is_file() {
+                builder = builder.summaries_db_override(summaries_db);
+            }
+            builder
+                .build()
+                .await
+                .map_err(|error| SshBridgeError::BridgeStartupFailed(error.to_string()))?
         }
         "codex" => return Err(SshBridgeError::UseExistingCodexPath),
         // Every other agent (amp/droid/devin/hermes/grok/shell, plus
@@ -895,6 +941,249 @@ async fn validate_remote_cli_executes(
     Err(SshBridgeError::AgentCliMissing(format!(
         "{label} ({bin}) is present but failed to execute"
     )))
+}
+
+async fn hydrate_remote_agy_index(ssh: &SshClient, shell: RemoteShell, state_dir: &Path) {
+    use base64::Engine;
+    let script = format!("{PROFILE_INIT}\nbase64 ~/.gemini/antigravity-cli/conversation_summaries.db 2>/dev/null || true");
+    match ssh.exec_shell(&script, shell).await {
+        Ok(result) => {
+            let b64: String = result.stdout.chars().filter(|c| !c.is_whitespace()).collect();
+            if !b64.is_empty() {
+                if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(&b64) {
+                    if !bytes.is_empty() {
+                        let db_path = state_dir.join("conversation_summaries.db");
+                        if let Err(error) = std::fs::write(&db_path, bytes) {
+                            warn!("ssh bridge failed to write hydrated agy conversation_summaries.db: {error}");
+                        } else {
+                            debug!("ssh bridge successfully hydrated remote agy conversation_summaries.db");
+                        }
+                    }
+                }
+            }
+        }
+        Err(error) => {
+            warn!("ssh bridge remote agy session scan failed: {error}");
+        }
+    }
+
+    let model_script = format!(
+        "{PROFILE_INIT}\npython3 -c '\nimport sqlite3, glob, re, os, json\nconv_dir = os.path.expanduser(\"~/.gemini/antigravity-cli/conversations\")\nmapping = {{}}\nfor db in glob.glob(f\"{{conv_dir}}/*.db\"):\n    cid = os.path.basename(db)[:-3]\n    try:\n        conn = sqlite3.connect(f\"file:{{db}}?mode=ro\", uri=True)\n        cur = conn.cursor()\n        cur.execute(\"SELECT data FROM executor_metadata ORDER BY idx DESC LIMIT 1\")\n        row = cur.fetchone()\n        if row and row[0]:\n            m = re.findall(rb\"(?:gemini-[0-9\\.]+-flash(?:-[a-z]+)?|gemini-[0-9\\.]+-pro(?:-[a-z]+)?|claude-[a-z0-9\\-]+|gpt-oss-[a-z0-9\\-]+)\", row[0])\n            if m: mapping[cid] = m[0].decode(\"utf-8\", errors=\"ignore\")\n    except: pass\nprint(json.dumps(mapping))\n' 2>/dev/null | base64 -w0 || true"
+    );
+    if let Ok(result) = ssh.exec_shell(&model_script, shell).await {
+        let b64: String = result.stdout.chars().filter(|c| !c.is_whitespace()).collect();
+        if !b64.is_empty() {
+            if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(&b64) {
+                if !bytes.is_empty() {
+                    let models_path = state_dir.join("conversation_models.json");
+                    if let Err(error) = std::fs::write(&models_path, bytes) {
+                        warn!("ssh bridge failed to write hydrated agy conversation_models.json: {error}");
+                    } else {
+                        debug!("ssh bridge successfully hydrated remote agy conversation_models.json");
+                    }
+                }
+            }
+        }
+    }
+
+    let turns_script = format!(
+        r#"{PROFILE_INIT}
+python3 -c '
+import sqlite3, glob, os, json, gzip, base64
+
+def decode_protobuf(data):
+    i = 0; fields = []
+    while i < len(data):
+        key = 0; shift = 0
+        while i < len(data):
+            b = data[i]; i += 1
+            key |= (b & 0x7f) << shift
+            if not (b & 0x80): break
+            shift += 7
+        field_num = key >> 3; wire_type = key & 0x7
+        if wire_type == 0:
+            val = 0; shift = 0
+            while i < len(data):
+                b = data[i]; i += 1
+                val |= (b & 0x7f) << shift
+                if not (b & 0x80): break
+                shift += 7
+            fields.append((field_num, "varint", val))
+        elif wire_type == 2:
+            length = 0; shift = 0
+            while i < len(data):
+                b = data[i]; i += 1
+                length |= (b & 0x7f) << shift
+                if not (b & 0x80): break
+                shift += 7
+            val = data[i:i+length]; i += length
+            fields.append((field_num, "bytes", val))
+        elif wire_type == 1:
+            val = data[i:i+8]; i += 8
+            fields.append((field_num, "64bit", val))
+        elif wire_type == 5:
+            val = data[i:i+4]; i += 4
+            fields.append((field_num, "32bit", val))
+        else: break
+    return fields
+
+def parse_db(db_path):
+    conn = sqlite3.connect(f"file:{{db_path}}?mode=ro", uri=True)
+    c = conn.cursor()
+    c.execute("SELECT idx, step_type, status, step_payload FROM steps ORDER BY idx")
+    turns = []
+    current_turn = None
+    for idx, st, status, payload in c.fetchall():
+        if not payload: continue
+        parsed = decode_protobuf(payload)
+        if st == 14:
+            for fn, wt, val in parsed:
+                if fn == 19:
+                    for sfn, swt, sval in decode_protobuf(val):
+                        if sfn == 2:
+                            try:
+                                text = sval.decode("utf-8")
+                                if text.strip():
+                                    if current_turn: turns.append(current_turn)
+                                    current_turn = {{
+                                        "turn_id": f"turn-{{len(turns)+1}}",
+                                        "status": "completed",
+                                        "items": [{{
+                                            "type": "userMessage",
+                                            "id": f"item-user-{{idx}}",
+                                            "content": [{{"type": "text", "text": text}}]
+                                        }}],
+                                        "started_at": 0,
+                                        "completed_at": 0
+                                    }}
+                            except: pass
+        elif st == 15:
+            for fn, wt, val in parsed:
+                if fn == 20:
+                    for sfn, swt, sval in decode_protobuf(val):
+                        if sfn == 1:
+                            try:
+                                text = sval.decode("utf-8")
+                                if text.strip():
+                                    if not current_turn:
+                                        current_turn = {{
+                                            "turn_id": f"turn-{{len(turns)+1}}",
+                                            "status": "completed",
+                                            "items": [],
+                                            "started_at": 0,
+                                            "completed_at": 0
+                                        }}
+                                    current_turn["items"].append({{
+                                        "type": "agentMessage",
+                                        "id": f"item-agent-{{idx}}",
+                                        "text": text,
+                                        "phase": None,
+                                        "memory_citation": None
+                                    }})
+                            except: pass
+        elif st == 132:
+            cmd = ""
+            out = ""
+            for fn, wt, val in parsed:
+                if fn == 140:
+                    for sfn, swt, sval in decode_protobuf(val):
+                        if sfn == 1:
+                            key = ""
+                            for kfn, kwt, kval in decode_protobuf(sval):
+                                if kwt == "bytes":
+                                    s = kval.decode("utf-8", errors="ignore")
+                                    if s in ("CommandLine", "TargetFile", "Query", "toolSummary", "Cwd", "toolAction"): key = s
+                                    elif key == "CommandLine": cmd = s
+                                    elif key == "TargetFile" and not cmd: cmd = f"File: {{s}}"
+                                    elif key == "Query" and not cmd: cmd = f"Search: {{s}}"
+                                    elif key == "toolSummary" and not cmd: cmd = s
+                        elif sfn == 2:
+                            for rfn, rwt, rval in decode_protobuf(sval):
+                                if rfn == 1 and rwt == "bytes":
+                                    out = rval.decode("utf-8", errors="ignore")
+            if not current_turn:
+                current_turn = {{
+                    "turn_id": f"turn-{{len(turns)+1}}",
+                    "status": "completed",
+                    "items": [],
+                    "started_at": 0,
+                    "completed_at": 0
+                }}
+            current_turn["items"].append({{
+                "type": "commandExecution",
+                "id": f"item-tool-{{idx}}",
+                "command": cmd or "bash",
+                "cwd": "",
+                "status": "completed",
+                "aggregatedOutput": out or None,
+                "exitCode": 0,
+                "source": "agent"
+            }})
+    if current_turn: turns.append(current_turn)
+    return turns
+
+conv_dir = os.path.expanduser("~/.gemini/antigravity-cli/conversations")
+files = sorted(glob.glob(f"{{conv_dir}}/*.db"), key=os.path.getmtime, reverse=True)[:25]
+res = {{}}
+for f in files:
+    cid = os.path.basename(f)[:-3]
+    try:
+        t = parse_db(f)
+        if t: res[cid] = t
+    except: pass
+compressed = gzip.compress(json.dumps(res).encode("utf-8"))
+print(base64.b64encode(compressed).decode("ascii"))
+' 2>/dev/null || true"#
+    );
+    if let Ok(result) = ssh.exec_shell(&turns_script, shell).await {
+        let b64: String = result.stdout.chars().filter(|c| !c.is_whitespace()).collect();
+        if !b64.is_empty() {
+            if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(&b64) {
+                use flate2::read::GzDecoder;
+                use std::io::Read;
+                let mut decoder = GzDecoder::new(&bytes[..]);
+                let mut json_str = String::new();
+                if decoder.read_to_string(&mut json_str).is_ok() {
+                    if let Ok(map) = serde_json::from_str::<std::collections::HashMap<String, serde_json::Value>>(&json_str) {
+                        let turns_dir = state_dir.join("agy_turns");
+                        let _ = std::fs::create_dir_all(&turns_dir);
+
+                        // Read state_dir/threads.json to map agySessionId -> threadId
+                        let mut agy_to_thread = std::collections::HashMap::new();
+                        let threads_file = state_dir.join("threads.json");
+                        if let Ok(content) = std::fs::read_to_string(&threads_file) {
+                            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
+                                let list = val.get("threads").and_then(|t| t.as_array()).cloned().unwrap_or_else(|| {
+                                    val.as_array().cloned().unwrap_or_default()
+                                });
+                                for item in list {
+                                    if let (Some(tid), Some(asid)) = (
+                                        item.get("threadId").and_then(|t| t.as_str()),
+                                        item.get("agySessionId").and_then(|a| a.as_str()),
+                                    ) {
+                                        if !asid.is_empty() {
+                                            agy_to_thread.insert(asid.to_string(), tid.to_string());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        let count = map.len();
+                        for (cid, turns) in map {
+                            if let Ok(rendered) = serde_json::to_string_pretty(&turns) {
+                                let _ = std::fs::write(turns_dir.join(format!("{cid}.json")), &rendered);
+                                if let Some(tid) = agy_to_thread.get(&cid) {
+                                    let _ = std::fs::write(turns_dir.join(format!("{tid}.json")), &rendered);
+                                }
+                            }
+                        }
+                        info!("ssh bridge successfully hydrated {count} remote agy conversation turn histories");
+                    }
+                }
+            }
+        }
+    }
 }
 
 async fn hydrate_remote_claude_index(ssh: &SshClient, shell: RemoteShell, state_dir: &Path) {

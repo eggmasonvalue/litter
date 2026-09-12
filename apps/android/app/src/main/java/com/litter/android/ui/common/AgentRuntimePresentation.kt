@@ -141,6 +141,7 @@ private fun AgentRuntimeKind.bundledIconResource(): Int? =
         "hermes" -> R.drawable.agent_hermes
         "opencode" -> R.drawable.agent_opencode
         "pi" -> R.drawable.agent_pi
+        "agy", "antigravity" -> R.drawable.agent_agy
         else -> null
     }
 

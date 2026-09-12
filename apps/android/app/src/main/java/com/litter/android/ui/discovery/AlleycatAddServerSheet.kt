@@ -841,20 +841,20 @@ private fun InstructionsCard(
         if (pairingMode == AlleycatPairingMode.LocalStudio) {
             StepRow(number = "1", title = "In Local Studio, open Profile → Phone connection.")
             StepRow(number = "2", title = "Point this camera at the Profile QR code.")
-            TextButton(onClick = onPasteConnectionJSON) {
-                Icon(
-                    imageVector = Icons.Default.ContentCopy,
-                    contentDescription = null,
-                    tint = androidx.compose.ui.graphics.Color.White,
-                    modifier = Modifier.size(16.dp),
-                )
-                Spacer(Modifier.width(6.dp))
-                Text("Paste connection JSON", color = androidx.compose.ui.graphics.Color.White)
-            }
         } else {
             StepRow(number = "1", title = "On the host you want to connect to, run:")
             CommandRow()
             StepRow(number = "2", title = "Point this camera at the QR code it prints.")
+        }
+        TextButton(onClick = onPasteConnectionJSON) {
+            Icon(
+                imageVector = Icons.Default.ContentCopy,
+                contentDescription = null,
+                tint = androidx.compose.ui.graphics.Color.White,
+                modifier = Modifier.size(16.dp),
+            )
+            Spacer(Modifier.width(6.dp))
+            Text("Paste connection JSON", color = androidx.compose.ui.graphics.Color.White)
         }
     }
 }

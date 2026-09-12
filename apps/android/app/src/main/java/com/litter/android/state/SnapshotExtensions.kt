@@ -178,6 +178,7 @@ private fun modelProviderDisplayLabel(provider: String?): String? {
         "opencode", "open-code", "open_code" -> "opencode"
         "pi", "pi.dev", "pidev" -> "Pi"
         "openai", "codex" -> "Codex"
+        "google", "agy", "antigravity", "gemini-cli" -> "Antigravity"
         else -> {
             if (normalized.startsWith("claude") || normalized.contains("anthropic")) {
                 "Claude"
@@ -188,6 +189,11 @@ private fun modelProviderDisplayLabel(provider: String?): String? {
                 normalized.contains("amp_code")
             ) {
                 "Amp"
+            } else if (
+                normalized.startsWith("agy") ||
+                normalized.contains("antigravity")
+            ) {
+                "Antigravity"
             } else {
                 trimmed
             }

@@ -28,6 +28,7 @@ alleycat-bridge-core = { git = "https://github.com/dnakov/alleycat.git", rev = "
 alleycat-pi-bridge = { git = "https://github.com/dnakov/alleycat.git", rev = "417f2a9fe38cbed63754f0af7df61f32ec3034e6" }
 alleycat-claude-bridge = { git = "https://github.com/dnakov/alleycat.git", rev = "417f2a9fe38cbed63754f0af7df61f32ec3034e6" }
 alleycat-opencode-bridge = { git = "https://github.com/dnakov/alleycat.git", rev = "417f2a9fe38cbed63754f0af7df61f32ec3034e6" }
+alleycat-agy-bridge = { git = "https://github.com/dnakov/alleycat.git", rev = "417f2a9fe38cbed63754f0af7df61f32ec3034e6" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util"] }
@@ -79,7 +80,14 @@ inherits = "release"
 lto = false
 strip = true
 debug = 0
-codegen-units = 16
+codegen-units = 4
+
+[patch."https://github.com/dnakov/alleycat.git"]
+alleycat-bridge-core = { path = "../../../alleycat/crates/bridge-core" }
+alleycat-pi-bridge = { path = "../../../alleycat/crates/pi-bridge" }
+alleycat-claude-bridge = { path = "../../../alleycat/crates/claude-bridge" }
+alleycat-opencode-bridge = { path = "../../../alleycat/crates/opencode-bridge" }
+alleycat-agy-bridge = { path = "../../../alleycat/crates/agy-bridge" }
 
 [patch.crates-io]
 tokio-tungstenite = { git = "https://github.com/openai-oss-forks/tokio-tungstenite", rev = "132f5b39c862e3a970f731d709608b3e6276d5f6" }

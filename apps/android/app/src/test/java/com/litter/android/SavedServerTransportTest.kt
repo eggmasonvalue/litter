@@ -137,7 +137,7 @@ class SavedServerTransportTest {
                 detachedTransport = true,
             )
 
-        val restored = SavedServer.fromJson(server.toJson().toString())
+        val restored = SavedServer.fromJson(server.toJson())
 
         assertTrue(restored.detachedTransport)
     }
@@ -151,8 +151,9 @@ class SavedServerTransportTest {
                 hostname = "10.0.0.5",
                 port = 22,
             )
-        val json = legacy.toJson().toString()
-            .replace("\"detachedTransport\":false", "")
+        val json = legacy.toJson().apply {
+            remove("detachedTransport")
+        }
 
         val restored = SavedServer.fromJson(json)
 

@@ -189,8 +189,16 @@ fun LitterApp(
         val navigate = remember {
             { route: Route -> navStack = navStack + route }
         }
-        val navigateBack = remember {
-            { if (navStack.size > 1) navStack = navStack.dropLast(1) }
+        val navigateBack = remember(appModel) {
+            {
+                if (navStack.size > 1) {
+                    val popping = navStack.lastOrNull()
+                    if (popping is Route.Conversation || popping is Route.RealtimeVoice) {
+                        appModel.activateThread(null)
+                    }
+                    navStack = navStack.dropLast(1)
+                }
+            }
         }
         val navigateToConversation = remember {
             { key: ThreadKey -> navStack = listOf(Route.Home, Route.Conversation(key)) }
@@ -257,7 +265,13 @@ fun LitterApp(
                 showProjectPicker -> showProjectPicker = false
                 showSettings -> showSettings = false
                 showDiscovery -> showDiscovery = false
-                navStack.size > 1 -> navStack = navStack.dropLast(1)
+                navStack.size > 1 -> {
+                    val popping = navStack.lastOrNull()
+                    if (popping is Route.Conversation || popping is Route.RealtimeVoice) {
+                        appModel.activateThread(null)
+                    }
+                    navStack = navStack.dropLast(1)
+                }
             }
         }
 

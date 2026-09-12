@@ -101,14 +101,17 @@ fun HomeModelChip(
 
     LaunchedEffect(serverId, availableRuntimeKinds) {
         if (!serverId.isNullOrBlank()) {
-            val shouldReplaceSelection = availableModels.none {
-                it.matchesModelSelection(launchState.selectedModel, launchState.selectedAgentRuntimeKind)
-            } || autoSelectedModelKey == "${launchState.selectedAgentRuntimeKind.orEmpty()}:${launchState.selectedModel}"
             runCatching { appModel.loadConversationMetadataIfNeeded(serverId) }
             val loadedModels = appModel.snapshot.value?.servers
                 ?.firstOrNull { it.serverId == serverId }
                 ?.availableModels
                 .orEmpty()
+            val shouldReplaceSelection = launchState.selectedModel.isBlank() || (
+                loadedModels.isNotEmpty() &&
+                loadedModels.none {
+                    it.matchesModelSelection(launchState.selectedModel, launchState.selectedAgentRuntimeKind)
+                }
+            )
             if (
                 shouldReplaceSelection &&
                 usesServerConfiguredModelDefault(loadedModels.map { it.agentRuntimeKind })
@@ -116,12 +119,12 @@ fun HomeModelChip(
                 appModel.launchState.updateSelectedModel(null)
                 appModel.launchState.updateReasoningEffort(null)
                 autoSelectedModelKey = null
-            } else {
+            } else if (shouldReplaceSelection) {
                 val fallbackModel = loadedModels.firstOrNull {
                     it.agentRuntimeKind == "codex" && it.isDefault
                 } ?: loadedModels.firstOrNull { it.isDefault }
                     ?: loadedModels.firstOrNull()
-                if (shouldReplaceSelection && fallbackModel != null) {
+                if (fallbackModel != null) {
                     appModel.launchState.updateSelectedModel(
                         fallbackModel.id,
                         agentRuntimeKind = fallbackModel.agentRuntimeKind,

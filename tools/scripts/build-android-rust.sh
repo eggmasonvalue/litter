@@ -33,17 +33,19 @@ fi
 # (apps/android/core/bridge CMakeLists looks for it under jniLibs/$ABI/).
 # Build it on demand if any requested ABI is missing — self-sufficient for
 # CI workflows that invoke this script directly.
-ABIS_FOR_GHOSTTY="${ANDROID_ABIS:-$DEFAULT_ANDROID_ABIS}"
-NEED_GHOSTTY=0
-for abi in ${ABIS_FOR_GHOSTTY//,/ }; do
-  if [ ! -f "$OUT_DIR/$abi/libghostty.so" ]; then
-    NEED_GHOSTTY=1
-    break
+if [ "${LITTER_ENABLE_GHOSTTY_ANDROID:-0}" = "1" ]; then
+  ABIS_FOR_GHOSTTY="${ANDROID_ABIS:-$DEFAULT_ANDROID_ABIS}"
+  NEED_GHOSTTY=0
+  for abi in ${ABIS_FOR_GHOSTTY//,/ }; do
+    if [ ! -f "$OUT_DIR/$abi/libghostty.so" ]; then
+      NEED_GHOSTTY=1
+      break
+    fi
+  done
+  if [ "$NEED_GHOSTTY" = 1 ]; then
+    echo "==> libghostty.so missing for one or more ABIs; building (use 'make ghostty-android' for stamp caching)"
+    ANDROID_ABIS="$ABIS_FOR_GHOSTTY" "$REPO_DIR/tools/scripts/build-ghostty-android.sh"
   fi
-done
-if [ "$NEED_GHOSTTY" = 1 ]; then
-  echo "==> libghostty.so missing for one or more ABIs; building (use 'make ghostty-android' for stamp caching)"
-  ANDROID_ABIS="$ABIS_FOR_GHOSTTY" "$REPO_DIR/tools/scripts/build-ghostty-android.sh"
 fi
 
 echo "==> Preparing codex submodule..."

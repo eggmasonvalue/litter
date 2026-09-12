@@ -90,6 +90,7 @@ pub fn agent_runtime_kind(name: &str, display_name: &str) -> Option<AgentRuntime
         "claude" | "claude-code" | "claude_code" => Some("claude"),
         "droid" | "factory" | "factory-droid" | "factory_droid" => Some("droid"),
         "hermes" => Some("hermes"),
+        "agy" | "antigravity" | "gemini-cli" => Some("agy"),
         _ if display_name == "codex" => Some("codex"),
         _ if display_name == "pi" || display_name == "pi.dev" => Some("pi"),
         _ if display_name == "amp" || display_name == "amp code" => Some("amp"),
@@ -102,6 +103,7 @@ pub fn agent_runtime_kind(name: &str, display_name: &str) -> Option<AgentRuntime
             Some("droid")
         }
         _ if display_name == "hermes" => Some("hermes"),
+        _ if display_name == "agy" || display_name == "antigravity" => Some("agy"),
         _ => None,
     };
     if let Some(kind) = canonical {

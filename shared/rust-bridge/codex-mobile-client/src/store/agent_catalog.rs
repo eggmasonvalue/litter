@@ -321,6 +321,24 @@ pub const CATALOG: &[AgentCatalogEntry] = &[
         probe_commands: &[],
     },
     AgentCatalogEntry {
+        name: "agy",
+        display_name: "Antigravity",
+        title: Some("Google Antigravity"),
+        is_beta: false,
+        sort_order: 5,
+        description: "Google Antigravity CLI coding agent. Needs the `agy` CLI on the host.",
+        requirement: "install the `agy` CLI on the host and authenticate (`agy` or GEMINI_API_KEY)",
+        aliases: &["antigravity", "gemini-cli"],
+        locks_reasoning_effort_after_activity: false,
+        visible_modes: Some(&["default", "accept-edits", "plan"]),
+        uses_direct_codex_port: false,
+        supports_thread_permission_overrides: false,
+        reports_effective_thread_permissions: false,
+        reach: AgentReach::SshBridgeAndPairing,
+        probe_style: ProbeStyle::Path,
+        probe_commands: &["agy"],
+    },
+    AgentCatalogEntry {
         name: "shell",
         display_name: "Shell",
         title: Some("Shell"),
@@ -346,14 +364,14 @@ pub const CATALOG: &[AgentCatalogEntry] = &[
 /// stable; [`tests::ssh_bridge_orders_match_catalog`] asserts it stays
 /// in sync with the `reach` flags.
 pub const SSH_BRIDGE_PROBE_ORDER: &[&str] =
-    &["local-studio", "claude", "pi", "opencode", "codex"];
+    &["local-studio", "claude", "pi", "opencode", "agy", "codex"];
 
 /// Same set, in the order automatic reconnect prefers when a saved
 /// server did not record which runtimes it had. Claude leads because
 /// it is the most common SSH-bootstrap target; Local Studio trails
 /// because it is only present on hosts running the desktop app.
 pub const SSH_BRIDGE_RECONNECT_ORDER: &[&str] =
-    &["claude", "pi", "opencode", "codex", "local-studio"];
+    &["claude", "pi", "opencode", "agy", "codex", "local-studio"];
 
 /// Resolve any spelling of an agent id — canonical name, manifest
 /// alias, or an alleycat `name`/`display_name` pair — to its catalog
